@@ -93,10 +93,29 @@ Dev build results (`--enable-zjit=dev`, with debug assertions):
 
 ## Remaining targets (from zjit-optimization-spec.md)
 
-| Target | Expected impact | Status |
-|--------|----------------|--------|
-| Float#== annotation | ~1% | Low priority (preamble, not inner loop) |
-| Float/Integer mixed ops | ~1% | Low priority (once per row) |
-| Loop-invariant code motion | 5-10% | Needs ZJIT infrastructure |
-| Float unboxing / scalar replacement | 15-25% | Needs ZJIT infrastructure |
-| Array bounds check elimination | 5-10% | Needs ZJIT infrastructure |
+### Quick wins (next PRs)
+
+| Target | Expected impact | Notes |
+|--------|----------------|-------|
+| Math.sqrt/sin/cos/atan2 annotations | 1-3% | Pure leaf+no_gc cfuncs. Pattern same as #16721 predicate annotations. |
+| Float comparisons (>, >=, <, <=, ==) HIR | ~1-2% | FloatGt/Ge/Lt/Le instructions following FloatAdd pattern (gen_prepare_leaf_call_with_gc). Improves BSP traversal in render_seg, point_on_side. |
+| Float#-@ annotation | <1% | Builtin in numeric.rb already leaf, just needs return type. |
+| ~~SCREEN_WIDTH constant folding~~ | ~1-2% | **Already done by ZJIT.** PatchPoint StableConstantNames folds to `Fixnum[320] = Const Value(320)`, and `x < SCREEN_WIDTH` becomes `FixnumLt`. |
+
+### Done (already shipped or merged)
+
+- Float arithmetic +, -, *, / -- ruby/ruby#16735 (FloatAdd/Sub/Mul/Div)
+- Float#to_i -- ruby/ruby#16735 (FloatToInt)
+- Float-Fixnum mixed operands -- ruby/ruby#16735
+- Float/Integer predicate annotations -- ruby/ruby#16721 (merged)
+- getlocal level=0 EP staleness fix -- ruby/ruby#16736 (merged)
+
+### Needs major ZJIT infrastructure (months of work, ZJIT team)
+
+| Target | Expected impact | Why blocked |
+|--------|----------------|-------------|
+| Float unboxing / scalar replacement | 15-25% | Needs FP register support in backend (ZJIT is GPR-only), escape analysis pass, scalar replacement pass. |
+| Loop-invariant code motion | 5-10% | Needs loop detection (back-edges, natural loops, dominance), invariant analysis pass, motion pass. |
+| Array bounds check elimination | 5-10% | Needs range analysis / abstract interpretation. |
+| Inlining Float#to_i further (fcvtzs) | 1-3% | Already inlined via ccall. Single-instruction codegen needs FP register support. |
+| Integer ops further inlining | 1-2% | Needs verification HIR is already firing FixnumAdd etc. in DOOM hot loop. |
