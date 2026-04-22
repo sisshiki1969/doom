@@ -70,6 +70,7 @@ module Doom
         @combat = nil
         @monster_ai = nil
         @leveltime = 0
+        @skip_background_fill = false
 
         @framebuffer = Array.new(SCREEN_WIDTH * SCREEN_HEIGHT, 0)
 

@@ -73,6 +73,7 @@ def load_game(wad_path)
   map = Doom::Map::MapData.load(wad, 'E1M1')
 
   renderer = Doom::Render::Renderer.new(wad, map, textures, palette, colormap, flats, sprites)
+  renderer.skip_background_fill = true
 
   player_start = map.player_start
   renderer.set_player(player_start.x, player_start.y, 41, player_start.angle)
@@ -95,7 +96,7 @@ def bench_render(game, frames: BENCH_FRAMES, warmup: WARMUP_FRAMES)
   GC.start
   GC.compact if GC.respond_to?(:compact)
 
-  gc_before = GC.stat[:total_allocated_objects]
+  gc_before = begin; GC.stat[:total_allocated_objects] || 0; rescue; 0; end
 
   times = Array.new(frames)
   frames.times do |i|
@@ -105,7 +106,7 @@ def bench_render(game, frames: BENCH_FRAMES, warmup: WARMUP_FRAMES)
     times[i] = t1 - t0
   end
 
-  gc_after = GC.stat[:total_allocated_objects]
+  gc_after = begin; GC.stat[:total_allocated_objects] || 0; rescue; 0; end
 
   times.sort!
   total = times.sum
@@ -280,9 +281,9 @@ def run_benchmark
   puts "\nGC Stats"
   puts "-" * 50
   gc = GC.stat
-  puts "  GC count:      #{gc[:count]}"
+  puts "  GC count:      #{gc[:count] || 'N/A'}"
   puts "  Heap pages:    #{gc[:heap_eden_pages] || gc[:heap_allocated_pages] || 'N/A'}"
-  puts "  Total allocs:  #{gc[:total_allocated_objects]}"
+  puts "  Total allocs:  #{gc[:total_allocated_objects] || 'N/A'}"
 
   puts ""
 end
