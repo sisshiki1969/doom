@@ -111,6 +111,7 @@ module Doom
 
       attr_reader :player_x, :player_y, :player_z, :sin_angle, :cos_angle, :framebuffer
       attr_writer :hidden_things, :combat, :monster_ai, :leveltime
+      attr_accessor :skip_background_fill
 
       # Diagnostic: returns info about all sprites and why they are/aren't visible
       def sprite_diagnostics
@@ -273,6 +274,7 @@ module Doom
       end
 
       def draw_floor_ceiling_background
+        return if @skip_background_fill
         player_sector = @map.sector_at(@player_x, @player_y)
         return unless player_sector
 

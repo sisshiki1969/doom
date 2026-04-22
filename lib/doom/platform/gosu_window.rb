@@ -952,6 +952,9 @@ module Doom
           end
         when Gosu::KB_Z
           @show_debug = !@show_debug
+        when Gosu::KB_B
+          @renderer.skip_background_fill = !@renderer.skip_background_fill
+          puts "Background fill: #{@renderer.skip_background_fill ? 'OFF' : 'ON'}"
         when Gosu::KB_Y
           if defined?(RubyVM::YJIT)
             setup_yjit_toggle

@@ -62,9 +62,10 @@ module Doom
         @capturing = false
       end
 
-      # Skip background fill so we start from black - makes wall drawing visible
+      # Capture background fill as the first frame
       def draw_floor_ceiling_background
-        # no-op during capture
+        super
+        @seg_snapshots << @framebuffer.dup if @capturing
       end
 
       # Override draw_wall_column_ex to detect when a seg actually draws pixels
