@@ -48,36 +48,8 @@ module Doom
       STOPSPEED = 0.5                      # Snap-to-zero threshold (units/sec)
       TURN_SPEED = 3.0       # Degrees per frame
       MOUSE_SENSITIVITY = 0.15  # Mouse look sensitivity
-      PLAYER_RADIUS = 16.0   # Collision radius
 
       USE_DISTANCE = 64.0  # Max distance to use a linedef
-
-      # Solid thing types with their collision radii (from mobjinfo[] MF_SOLID)
-      # Monsters, barrels, pillars, lamps, torches, trees block player movement
-      SOLID_THING_RADIUS = {
-        9 => 20, 65 => 20, 66 => 20, 67 => 20, 68 => 20, # Shotgun Guy variants
-        3004 => 20, 84 => 20,                               # Zombieman
-        3001 => 20,                                          # Imp
-        3002 => 30, 58 => 30,                                # Demon, Spectre
-        3003 => 24, 69 => 24,                                # Baron, Hell Knight
-        3006 => 16,                                          # Lost Soul
-        3005 => 31,                                          # Cacodemon
-        16 => 40,                                            # Cyberdemon
-        7 => 128,                                            # Spider Mastermind
-        64 => 20,                                            # Archvile
-        71 => 31,                                            # Pain Elemental
-        2035 => 10,                                          # Barrel
-        2028 => 16,                                          # Tall lamp
-        48 => 16, 30 => 16, 32 => 16,                       # Tech column, green/red pillars
-        31 => 16, 33 => 16, 36 => 16,                       # Short pillars
-        41 => 16, 43 => 16,                                  # Evil eye, burnt tree
-        54 => 32,                                            # Brown tree
-        44 => 16, 45 => 16, 46 => 16,                       # Tall torches
-        55 => 16, 56 => 16, 57 => 16,                       # Short torches
-        47 => 16, 70 => 16,                                  # Stubs
-        85 => 16, 86 => 16,                                  # Tall tech lamps
-        2046 => 16,                                          # Burning barrel
-      }.freeze
 
       def initialize(renderer, palette, map, player_state = nil, status_bar = nil, weapon_renderer = nil, sector_actions = nil, animations = nil, sector_effects = nil, item_pickup = nil, combat = nil, monster_ai = nil, menu = nil, sound_engine = nil)
         fullscreen = ARGV.include?('--fullscreen') || ARGV.include?('-f')
@@ -104,8 +76,9 @@ module Doom
         @damage_multiplier = 1.0
         @skill = Game::Menu::SKILL_MEDIUM
         @skill_hidden = {}  # Thing indices hidden by difficulty
-        @last_floor_height = nil
-        @player_momz = 0.0
+        @physics = Game::PlayerPhysics.new(map, player_state)
+        @physics.item_pickup = item_pickup
+        @physics.combat = combat
         @move_momx = 0.0
         @move_momy = 0.0
         @leveltime = 0
@@ -171,7 +144,7 @@ module Doom
           @tic_accumulator -= 1.0
           @sector_effects&.update
           @player_state&.update_viewheight
-          apply_gravity
+          step_player_physics
           @player_state&.update_attack  # Attack timing at 35fps like DOOM
           health_before = @player_state&.health || 100
 
@@ -222,7 +195,8 @@ module Doom
           # Check for teleport
           if (dest = @sector_actions.pop_teleport)
             @renderer.set_player(dest[:x], dest[:y], @renderer.player_z, dest[:angle])
-            update_player_height(dest[:x], dest[:y])
+            @physics.reset
+            settle_player_height(dest[:x], dest[:y])
           end
         end
 
@@ -493,18 +467,18 @@ module Doom
         new_y = old_y + dy
 
         # Check if new position is valid and path doesn't cross blocking linedefs
-        if valid_move?(old_x, old_y, new_x, new_y)
+        if @physics.valid_move?(old_x, old_y, new_x, new_y)
           @renderer.move_to(new_x, new_y)
-          update_player_height(new_x, new_y)
+          settle_player_height(new_x, new_y)
         else
           # Wall sliding: project movement along the blocking wall
-          slide_x, slide_y = compute_slide(old_x, old_y, dx, dy)
+          slide_x, slide_y = @physics.compute_slide(old_x, old_y, dx, dy)
           if slide_x && (slide_x != 0.0 || slide_y != 0.0)
             sx = old_x + slide_x
             sy = old_y + slide_y
-            if valid_move?(old_x, old_y, sx, sy)
+            if @physics.valid_move?(old_x, old_y, sx, sy)
               @renderer.move_to(sx, sy)
-              update_player_height(sx, sy)
+              settle_player_height(sx, sy)
               # Redirect momentum along the wall
               @move_momx = slide_x / ([dx.abs, dy.abs].max.nonzero? || 1) * @move_momx.abs
               @move_momy = slide_y / ([dx.abs, dy.abs].max.nonzero? || 1) * @move_momy.abs
@@ -513,13 +487,13 @@ module Doom
           end
 
           # Fallback: try axis-aligned sliding
-          if dx != 0.0 && valid_move?(old_x, old_y, new_x, old_y)
+          if dx != 0.0 && @physics.valid_move?(old_x, old_y, new_x, old_y)
             @renderer.move_to(new_x, old_y)
-            update_player_height(new_x, old_y)
+            settle_player_height(new_x, old_y)
             @move_momy *= 0.0
-          elsif dy != 0.0 && valid_move?(old_x, old_y, old_x, new_y)
+          elsif dy != 0.0 && @physics.valid_move?(old_x, old_y, old_x, new_y)
             @renderer.move_to(old_x, new_y)
-            update_player_height(old_x, new_y)
+            settle_player_height(old_x, new_y)
             @move_momx *= 0.0
           else
             # Fully blocked - kill momentum
@@ -529,272 +503,17 @@ module Doom
         end
       end
 
-      # Find the blocking linedef and project movement along it
-      def compute_slide(px, py, dx, dy)
-        best_wall = nil
-        best_dist = Float::INFINITY
-
-        @map.linedefs.each do |linedef|
-          v1 = @map.vertices[linedef.v1]
-          v2 = @map.vertices[linedef.v2]
-
-          # Only check linedefs near the player
-          next unless line_circle_intersect?(v1.x, v1.y, v2.x, v2.y, px + dx, py + dy, PLAYER_RADIUS)
-
-          # Check if this linedef actually blocks
-          next unless linedef_blocks?(linedef, px + dx, py + dy) ||
-                      crosses_blocking_linedef?(px, py, px + dx, py + dy, linedef)
-
-          # Distance from player to this linedef
-          dist = point_to_line_distance(px, py, v1.x, v1.y, v2.x, v2.y)
-          if dist < best_dist
-            best_dist = dist
-            best_wall = linedef
-          end
-        end
-
-        return nil unless best_wall
-
-        # Get wall direction vector
-        v1 = @map.vertices[best_wall.v1]
-        v2 = @map.vertices[best_wall.v2]
-        wall_dx = (v2.x - v1.x).to_f
-        wall_dy = (v2.y - v1.y).to_f
-        wall_len = Math.sqrt(wall_dx * wall_dx + wall_dy * wall_dy)
-        return nil if wall_len == 0
-
-        wall_dx /= wall_len
-        wall_dy /= wall_len
-
-        # Project movement onto wall direction
-        dot = dx * wall_dx + dy * wall_dy
-        [dot * wall_dx, dot * wall_dy]
+      def settle_player_height(x, y)
+        @physics.settle_at(x, y)
+        z = @physics.eye_z
+        @renderer.set_z(z) if z
       end
 
-      # Per-tic gravity: matches Chocolate Doom's P_ZMovement, GRAVITY=1 unit/tic^2.
-      GRAVITY = 1.0
-      INITIAL_FALL_MOMZ = -2.0  # First-tic kick when momz==0 (DOOM uses -GRAVITY*2)
-      FALL_IMPACT_THRESHOLD = -8.0  # momz < -GRAVITY*8 triggers viewheight squat
-
-      def update_player_height(x, y)
-        sector = @map.sector_at(x, y)
-        return unless sector
-
-        new_floor = sector.floor_height
-
-        if @player_state
-          @last_floor_height ||= new_floor
-
-          if new_floor > @last_floor_height
-            # Step up: snap immediately (gated to <=24 by valid_move?)
-            step = new_floor - @last_floor_height
-            @player_state.notify_step(step) if step.abs <= 24
-            @last_floor_height = new_floor
-            @player_momz = 0.0
-          end
-          # Stepping onto a lower floor leaves @last_floor_height alone;
-          # apply_gravity will lower the player gradually each tic.
-
-          refresh_player_z
-        else
-          @last_floor_height = new_floor
-          @renderer.set_z(new_floor + 41)
-        end
-      end
-
-      def refresh_player_z
-        return unless @last_floor_height
-        if @player_state
-          view_bob = @player_state.view_bob_offset
-          @renderer.set_z(@last_floor_height + @player_state.viewheight + view_bob)
-        else
-          @renderer.set_z(@last_floor_height + 41)
-        end
-      end
-
-      # Per-tic vertical movement: applies gravity when feet are above the
-      # current sector floor, snaps up when a lift rises beneath the player.
-      def apply_gravity
-        return unless @player_state && @last_floor_height
-
-        sector = @map.sector_at(@renderer.player_x, @renderer.player_y)
-        return unless sector
-        ground = sector.floor_height
-
-        if @last_floor_height > ground
-          @player_momz = (@player_momz == 0.0 ? INITIAL_FALL_MOMZ : @player_momz - GRAVITY)
-          @last_floor_height += @player_momz
-          if @last_floor_height <= ground
-            impact_momz = @player_momz
-            @last_floor_height = ground
-            @player_momz = 0.0
-            @player_state.apply_fall_impact(impact_momz) if impact_momz < FALL_IMPACT_THRESHOLD
-          end
-          refresh_player_z
-        elsif @last_floor_height < ground
-          # Floor rose under player (lift, raising sector)
-          step = ground - @last_floor_height
-          @player_state.notify_step(step) if step.abs <= 24
-          @last_floor_height = ground
-          @player_momz = 0.0
-          refresh_player_z
-        end
-      end
-
-      def valid_move?(old_x, old_y, new_x, new_y)
-        # Check if destination is inside a valid sector
-        sector = @map.sector_at(new_x, new_y)
-        return false unless sector
-
-        # Check floor height - can't step up too high (step-down is unlimited)
-        floor_height = sector.floor_height
-        current_floor = @last_floor_height || (@renderer.player_z - Game::PlayerState::VIEWHEIGHT)
-        return false if floor_height - current_floor > 24  # Max step-up height
-
-        # Check against blocking linedefs: both circle intersection and path crossing
-        @map.linedefs.each do |linedef|
-          if linedef_blocks?(linedef, new_x, new_y)
-            return false
-          end
-          if crosses_blocking_linedef?(old_x, old_y, new_x, new_y, linedef)
-            return false
-          end
-        end
-
-        # Check against solid things (monsters, barrels, pillars, etc.)
-        combined_radius = PLAYER_RADIUS
-        picked = @item_pickup&.picked_up
-        @map.things.each_with_index do |thing, idx|
-          next if @skill_hidden[idx]
-          next if picked && picked[idx]
-          next if @combat && @combat.dead?(idx)
-          thing_radius = SOLID_THING_RADIUS[thing.type]
-          next unless thing_radius
-
-          dx = new_x - thing.x
-          dy = new_y - thing.y
-          min_dist = combined_radius + thing_radius
-          if dx * dx + dy * dy < min_dist * min_dist
-            return false
-          end
-        end
-
-        true
-      end
-
-      # Check if movement from (x1,y1) to (x2,y2) crosses a blocking linedef
-      def crosses_blocking_linedef?(x1, y1, x2, y2, linedef)
-        v1 = @map.vertices[linedef.v1]
-        v2 = @map.vertices[linedef.v2]
-
-        # One-sided linedef always blocks crossing
-        if linedef.sidedef_left == 0xFFFF
-          return segments_intersect?(x1, y1, x2, y2, v1.x, v1.y, v2.x, v2.y)
-        end
-
-        # ML_BLOCKING (0x0001) blocks crossing for everything including player
-        if (linedef.flags & 0x0001) != 0
-          return segments_intersect?(x1, y1, x2, y2, v1.x, v1.y, v2.x, v2.y)
-        end
-
-        # Two-sided: check if impassable (high step-up OR low ceiling)
-        front_side = @map.sidedefs[linedef.sidedef_right]
-        back_side = @map.sidedefs[linedef.sidedef_left]
-        front_sector = @map.sectors[front_side.sector]
-        back_sector = @map.sectors[back_side.sector]
-
-        min_ceiling = [front_sector.ceiling_height, back_sector.ceiling_height].min
-        max_floor = [front_sector.floor_height, back_sector.floor_height].max
-
-        # Step-up is from player's current floor to the higher of the two adjoining floors.
-        # Step-down (falling off a ledge) is unlimited.
-        current_floor = @last_floor_height || front_sector.floor_height
-        step_up = max_floor - current_floor
-
-        # Passable if step-up is small AND enough headroom
-        return false if step_up <= 24 && (min_ceiling - max_floor) >= 56
-
-        segments_intersect?(x1, y1, x2, y2, v1.x, v1.y, v2.x, v2.y)
-      end
-
-      # Test if line segment (ax1,ay1)-(ax2,ay2) intersects (bx1,by1)-(bx2,by2)
-      def segments_intersect?(ax1, ay1, ax2, ay2, bx1, by1, bx2, by2)
-        d1x = ax2 - ax1
-        d1y = ay2 - ay1
-        d2x = bx2 - bx1
-        d2y = by2 - by1
-
-        denom = d1x * d2y - d1y * d2x
-        return false if denom.abs < 0.001  # Parallel
-
-        dx = bx1 - ax1
-        dy = by1 - ay1
-
-        t = (dx * d2y - dy * d2x).to_f / denom
-        u = (dx * d1y - dy * d1x).to_f / denom
-
-        t > 0.0 && t < 1.0 && u >= 0.0 && u <= 1.0
-      end
-
-      def linedef_blocks?(linedef, x, y)
-        v1 = @map.vertices[linedef.v1]
-        v2 = @map.vertices[linedef.v2]
-
-        # Check if player circle intersects this line
-        return false unless line_circle_intersect?(v1.x, v1.y, v2.x, v2.y, x, y, PLAYER_RADIUS)
-
-        # One-sided linedef (wall) always blocks
-        return true if linedef.sidedef_left == 0xFFFF
-
-        # ML_BLOCKING on two-sided: handled by crosses_blocking_linedef? (crossing check)
-        # Don't check here -- linedef_blocks? is a proximity check and would
-        # block the player when standing near the line, not just crossing it
-
-        # Two-sided: check if impassable (high step-up OR low ceiling)
-        front_side = @map.sidedefs[linedef.sidedef_right]
-        back_side = @map.sidedefs[linedef.sidedef_left]
-
-        front_sector = @map.sectors[front_side.sector]
-        back_sector = @map.sectors[back_side.sector]
-
-        min_ceiling = [front_sector.ceiling_height, back_sector.ceiling_height].min
-        max_floor = [front_sector.floor_height, back_sector.floor_height].max
-
-        # Step-up uses the higher floor relative to the player's current floor.
-        # Step-down (dropping off a ledge) is unlimited.
-        current_floor = @last_floor_height || front_sector.floor_height
-        step_up = max_floor - current_floor
-
-        # Block if step-up too high OR not enough headroom
-        step_up > 24 || (min_ceiling - max_floor) < 56
-      end
-
-      def line_circle_intersect?(x1, y1, x2, y2, cx, cy, radius)
-        # Vector from line start to circle center
-        dx = cx - x1
-        dy = cy - y1
-
-        # Line direction vector
-        line_dx = x2 - x1
-        line_dy = y2 - y1
-        line_len_sq = line_dx * line_dx + line_dy * line_dy
-
-        return false if line_len_sq == 0
-
-        # Project circle center onto line, clamped to segment
-        t = ((dx * line_dx) + (dy * line_dy)) / line_len_sq
-        t = [[t, 0.0].max, 1.0].min
-
-        # Closest point on line segment
-        closest_x = x1 + t * line_dx
-        closest_y = y1 + t * line_dy
-
-        # Distance from circle center to closest point
-        dist_x = cx - closest_x
-        dist_y = cy - closest_y
-        dist_sq = dist_x * dist_x + dist_y * dist_y
-
-        dist_sq < radius * radius
+      def step_player_physics
+        return unless @physics.floor_z
+        @physics.step(@renderer.player_x, @renderer.player_y)
+        z = @physics.eye_z
+        @renderer.set_z(z) if z
       end
 
       def handle_mouse_look
@@ -1060,8 +779,7 @@ module Doom
 
       def respawn_player
         @player_state.reset
-        @last_floor_height = nil
-        @player_momz = 0.0
+        @physics.reset
         @move_momx = 0.0
         @move_momy = 0.0
 
@@ -1070,6 +788,8 @@ module Doom
         @item_pickup = Game::ItemPickup.new(@map, @player_state, @skill_hidden) if @item_pickup
         @combat = Game::Combat.new(@map, @player_state, sprites, @skill_hidden, @sound) if @combat && sprites
         @monster_ai = Game::MonsterAI.new(@map, @combat, @player_state, @combat.sprites, @skill_hidden, @sound) if @monster_ai && @combat
+        @physics.item_pickup = @item_pickup
+        @physics.combat = @combat
 
         # Re-apply active cheats from menu options
         if @menu
@@ -1084,7 +804,7 @@ module Doom
         ps = @map.player_start
         if ps
           @renderer.set_player(ps.x, ps.y, 41, ps.angle)
-          update_player_height(ps.x, ps.y)
+          settle_player_height(ps.x, ps.y)
         end
       end
 
@@ -1209,13 +929,15 @@ module Doom
         @monster_ai.aggression = true
         @monster_ai.damage_multiplier = @damage_multiplier
 
-        @last_floor_height = nil
-        @player_momz = 0.0
+        @physics = Game::PlayerPhysics.new(map, @player_state)
+        @physics.skill_hidden = @skill_hidden
+        @physics.item_pickup = @item_pickup
+        @physics.combat = @combat
         @move_momx = 0.0
         @move_momy = 0.0
         @leveltime = 0
 
-        update_player_height(ps.x, ps.y)
+        settle_player_height(ps.x, ps.y)
       end
 
       def apply_difficulty(skill)
@@ -1231,6 +953,7 @@ module Doom
 
         # Compute which things are hidden by this skill level
         @skill_hidden = compute_skill_hidden(skill)
+        @physics.skill_hidden = @skill_hidden
 
         # Baby mode: start with some armor
         if skill == Game::Menu::SKILL_BABY
