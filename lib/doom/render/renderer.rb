@@ -97,6 +97,10 @@ module Doom
         @ceiling_clip = Array.new(SCREEN_WIDTH, -1)
         @floor_clip = Array.new(SCREEN_WIDTH, SCREEN_HEIGHT)
 
+        # Per-sprite clip buffers, reset (not reallocated) for each draw_sprite call
+        @sprite_clipbot = Array.new(SCREEN_WIDTH, -2)
+        @sprite_cliptop = Array.new(SCREEN_WIDTH, -2)
+
         # Sprite clip arrays (copy of wall clips for sprite clipping)
         @sprite_ceiling_clip = Array.new(SCREEN_WIDTH, -1)
         @sprite_floor_clip = Array.new(SCREEN_WIDTH, SCREEN_HEIGHT)
@@ -1745,9 +1749,14 @@ module Doom
         sprite_gzt = base_z + sprite.top_offset
         sprite_gz = sprite_gzt - sprite.height
 
-        # Initialize per-column clip arrays (-2 = not yet clipped)
-        clipbot = Array.new(SCREEN_WIDTH, -2)
-        cliptop = Array.new(SCREEN_WIDTH, -2)
+        # Reuse per-frame clip buffers (-2 = not yet clipped). Only reset the
+        # range we'll touch ([x1, x2]); leftover values past x2 are ignored.
+        clipbot = @sprite_clipbot
+        cliptop = @sprite_cliptop
+        x1.upto(x2) do |i|
+          clipbot[i] = -2
+          cliptop[i] = -2
+        end
 
         # Scan drawsegs from back to front for obscuring segs
         @drawsegs.reverse_each do |ds|
