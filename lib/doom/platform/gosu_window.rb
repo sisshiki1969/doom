@@ -23,7 +23,8 @@ module Doom
             [Fiddle::TYPE_VOIDP, Fiddle::TYPE_INT], Fiddle::TYPE_VOID
           )
           @ready = true
-        rescue
+        rescue StandardError, LoadError => e
+          warn "SDLKeyboardGrab.setup failed: #{e.class}: #{e.message}"
           @ready = false
         end
 
@@ -1012,8 +1013,8 @@ module Doom
         end)
 
         @yjit_toggle_ready = true
-      rescue => e
-        puts "YJIT toggle setup failed: #{e.message}"
+      rescue StandardError => e
+        warn "YJIT toggle setup failed: #{e.class}: #{e.message}"
       end
 
       def needs_cursor?

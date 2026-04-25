@@ -1084,7 +1084,7 @@ module Doom
                 upper_tex_y = sidedef.y_offset + back_sector.ceiling_height - sector.ceiling_height + tex_height
               end
               draw_wall_column_ex(x, ceil_y, back_ceil_y, sidedef.upper_texture, dist,
-                                  sector.light_level, tex_col, upper_tex_y, scale, sector.ceiling_height, back_sector.ceiling_height)
+                                  sector.light_level, tex_col, upper_tex_y, scale, sector.ceiling_height)
             end
 
             # Lower wall (floor step up)
@@ -1095,7 +1095,7 @@ module Doom
                 lower_tex_y = sidedef.y_offset
               end
               draw_wall_column_ex(x, back_floor_y, floor_y, sidedef.lower_texture, dist,
-                                  sector.light_level, tex_col, lower_tex_y, scale, back_sector.floor_height, sector.floor_height)
+                                  sector.light_level, tex_col, lower_tex_y, scale, back_sector.floor_height)
             end
 
             # Store masked texture column for deferred rendering (grates, bars)
@@ -1164,7 +1164,7 @@ module Doom
               mid_tex_y = sidedef.y_offset
             end
             draw_wall_column_ex(x, ceil_y, floor_y, sidedef.middle_texture, dist,
-                                sector.light_level, tex_col, mid_tex_y, scale, sector.ceiling_height, sector.floor_height)
+                                sector.light_level, tex_col, mid_tex_y, scale, sector.ceiling_height)
 
             # Track wall depth for sprite clipping (solid wall occludes this column)
             @wall_depth[x] = [@wall_depth[x], dist].min
@@ -1201,8 +1201,8 @@ module Doom
       # tex_col: texture column (X coordinate in texture)
       # tex_y_start: starting Y coordinate in texture (accounts for pegging)
       # scale: projection scale for this column (projection / distance)
-      # world_top, world_bottom: world heights of this wall section
-      def draw_wall_column_ex(x, y1, y2, texture_name, dist, light_level, tex_col, tex_y_start, scale, world_top, world_bottom)
+      # world_top: world height of the top of this wall section
+      def draw_wall_column_ex(x, y1, y2, texture_name, dist, light_level, tex_col, tex_y_start, scale, world_top)
         return if y1 > y2
         return if texture_name.nil? || texture_name.empty? || texture_name == '-'
 
