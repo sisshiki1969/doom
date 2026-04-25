@@ -3,11 +3,15 @@
 *.png
 *.ppm
 *.gem
+*.dump
+debug_*
+tmp/
 reference/
 Gemfile.lock
 .bundle/
 vendor/
 .idea/
+.DS_Store
 plan.md
 profile.rb
 spec/examples.txt
