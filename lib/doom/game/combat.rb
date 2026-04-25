@@ -152,7 +152,7 @@ module Doom
         )
       end
 
-      attr_reader :dead_things, :projectiles, :explosions, :puffs
+      attr_reader :dead_things, :projectiles, :explosions, :puffs, :sprites
 
       def in_pain?(thing_idx)
         @pain_until[thing_idx] && @tic < @pain_until[thing_idx]

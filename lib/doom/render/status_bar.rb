@@ -33,6 +33,8 @@ module Doom
       NUM_WIDTH = 14          # Width of large digit
       SMALL_NUM_WIDTH = 4     # Width of small digit
 
+      attr_reader :gfx
+
       def initialize(hud_graphics, player_state)
         @gfx = hud_graphics
         @player = player_state

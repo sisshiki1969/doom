@@ -111,6 +111,7 @@ module Doom
       end
 
       attr_reader :player_x, :player_y, :player_z, :sin_angle, :cos_angle, :framebuffer
+      attr_reader :wad, :textures, :colormap, :flats, :sprites
       attr_writer :hidden_things, :combat, :monster_ai, :leveltime
       attr_accessor :skip_background_fill
 

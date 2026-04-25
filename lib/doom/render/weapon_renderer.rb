@@ -14,6 +14,8 @@ module Doom
       WEAPONTOP = 32
       VIEW_CENTERY = (SCREEN_HEIGHT - StatusBar::STATUS_BAR_HEIGHT) / 2  # 104
 
+      attr_reader :gfx
+
       def initialize(hud_graphics, player_state)
         @gfx = hud_graphics
         @player = player_state

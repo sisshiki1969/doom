@@ -130,7 +130,7 @@ module Doom
 
         # Pre-build palette RGBA lookups for all 14 palettes (0=normal, 1-8=pain red)
         @all_palette_rgba = []
-        wad = renderer.instance_variable_get(:@wad)
+        wad = renderer.wad
         14.times do |pal_idx|
           pal = Wad::Palette.load(wad, pal_idx)
           @all_palette_rgba << pal.colors.map { |r, g, b| [r, g, b, 255].pack('CCCC') }
@@ -1066,11 +1066,10 @@ module Doom
         @move_momy = 0.0
 
         # Reset item pickup, combat, and monster AI state
-        sprites = @combat&.instance_variable_get(:@sprites)
+        sprites = @combat&.sprites
         @item_pickup = Game::ItemPickup.new(@map, @player_state, @skill_hidden) if @item_pickup
         @combat = Game::Combat.new(@map, @player_state, sprites, @skill_hidden, @sound) if @combat && sprites
-        sprites_mgr = @combat&.instance_variable_get(:@sprites)
-        @monster_ai = Game::MonsterAI.new(@map, @combat, @player_state, sprites_mgr, @skill_hidden, @sound) if @monster_ai && @combat
+        @monster_ai = Game::MonsterAI.new(@map, @combat, @player_state, @combat.sprites, @skill_hidden, @sound) if @monster_ai && @combat
 
         # Re-apply active cheats from menu options
         if @menu
@@ -1099,7 +1098,7 @@ module Doom
         when :all_weapons
           if value
             # Give all weapons that have sprites loaded
-            @gfx_weapons ||= @weapon_renderer&.instance_variable_get(:@gfx)&.weapons || {}
+            @gfx_weapons ||= @weapon_renderer&.gfx&.weapons || {}
             (0..7).each do |w|
               name = Game::PlayerState::WEAPON_NAMES[w]
               @player_state.has_weapons[w] = true if @gfx_weapons[name]&.dig(:idle)
@@ -1175,14 +1174,13 @@ module Doom
           exit_type: exit_type,
         }
 
-        wad = @renderer.instance_variable_get(:@wad)
-        @intermission = Game::Intermission.new(wad, @status_bar.instance_variable_get(:@gfx), stats)
+        @intermission = Game::Intermission.new(@renderer.wad, @status_bar.gfx, stats)
       end
 
       def load_next_map(map_name)
         return unless map_name
 
-        wad = @renderer.instance_variable_get(:@wad)
+        wad = @renderer.wad
         @current_map = map_name
 
         # Load new map data
@@ -1190,15 +1188,10 @@ module Doom
         @map = map
 
         # Rebuild all systems for new map
-        palette = @palette
-        colormap = @renderer.instance_variable_get(:@colormap)
-        textures = @renderer.instance_variable_get(:@textures)
-        flats = @renderer.instance_variable_get(:@flats)
-        sprites = @renderer.instance_variable_get(:@sprites)
-        animations = @animations
-
-        @renderer = Render::Renderer.new(wad, map, textures, palette, colormap,
-                                          flats.values, sprites, animations)
+        @renderer = Render::Renderer.new(
+          wad, map, @renderer.textures, @palette, @renderer.colormap,
+          @renderer.flats.values, @renderer.sprites, @animations
+        )
         ps = map.player_start
         @renderer.set_player(ps.x, ps.y, 41, ps.angle)
 
