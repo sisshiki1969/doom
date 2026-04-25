@@ -203,4 +203,72 @@ RSpec.describe Doom::Map::MapData do
       expect(subsector).to be_a(Doom::Map::Subsector)
     end
   end
+
+  # In-memory BSP traversal tests that don't require a WAD. Builds a tiny
+  # tree by hand to exercise sector_at and subsector_at directly.
+  describe 'BSP traversal (synthetic)' do
+    # Two-leaf tree split by a vertical line at x=100.
+    # Right child  (x >= 100) -> subsector 0 -> sector 0 (floor 0)
+    # Left child   (x <  100) -> subsector 1 -> sector 1 (floor 64)
+    let(:map) do
+      m = Doom::Map::MapData.new('TEST')
+
+      # Two sectors so we can tell which side we landed on.
+      m.sectors << Doom::Map::Sector.new(0, 128, 'F', 'C', 192, 0, 0)
+      m.sectors << Doom::Map::Sector.new(64, 128, 'F', 'C', 192, 0, 0)
+
+      # Two sidedefs, one per sector.
+      m.sidedefs << Doom::Map::Sidedef.new(0, 0, '-', '-', '-', 0)
+      m.sidedefs << Doom::Map::Sidedef.new(0, 0, '-', '-', '-', 1)
+
+      # One linedef per side; segs reference these.
+      m.linedefs << Doom::Map::Linedef.new(0, 0, 0, 0, 0, 0, 0xFFFF)  # for sector 0
+      m.linedefs << Doom::Map::Linedef.new(0, 0, 0, 0, 0, 1, 0xFFFF)  # for sector 1
+
+      # Segs: direction 0 -> use sidedef_right.
+      m.segs << Doom::Map::Seg.new(0, 0, 0, 0, 0, 0)  # subsector 0's first seg
+      m.segs << Doom::Map::Seg.new(0, 0, 0, 1, 0, 0)  # subsector 1's first seg
+
+      # Subsectors point to their first seg.
+      m.subsectors << Doom::Map::Subsector.new(1, 0)
+      m.subsectors << Doom::Map::Subsector.new(1, 1)
+
+      # One BSP node: vertical partition at x=100, dx=0, dy=1
+      # point_on_side: right = (px - 100) * 1; left = (py - 0) * 0 = 0
+      # right >= left when px >= 100 -> side 0 (right child)
+      flag = Doom::Map::Node::SUBSECTOR_FLAG
+      m.nodes << Doom::Map::Node.new(
+        100, 0,        # partition origin (x=100, y=0)
+        0, 1,          # partition direction (vertical, pointing +y)
+        nil, nil,      # bboxes unused for traversal
+        0 | flag,      # right child = subsector 0
+        1 | flag       # left child = subsector 1
+      )
+      m
+    end
+
+    it 'returns the right-side subsector when x is east of the partition' do
+      expect(map.subsector_at(150, 50)).to eq(map.subsectors[0])
+    end
+
+    it 'returns the left-side subsector when x is west of the partition' do
+      expect(map.subsector_at(50, 50)).to eq(map.subsectors[1])
+    end
+
+    it 'sector_at follows the same partition' do
+      expect(map.sector_at(150, 50).floor_height).to eq(0)
+      expect(map.sector_at(50, 50).floor_height).to eq(64)
+    end
+
+    it 'classifies points exactly on the partition line as right (front)' do
+      # right >= left, with both 0, picks side 0 (right child)
+      expect(map.subsector_at(100, 50)).to eq(map.subsectors[0])
+    end
+
+    it 'still returns a subsector for points far outside any bbox' do
+      # No bounds check in subsector_at -- it just walks the tree
+      expect(map.subsector_at(1_000_000, 1_000_000)).to eq(map.subsectors[0])
+      expect(map.subsector_at(-1_000_000, -1_000_000)).to eq(map.subsectors[1])
+    end
+  end
 end
