@@ -108,6 +108,7 @@ sprites = Doom::Wad::SpriteManager.new(wad)
 map = Doom::Map::MapData.load(wad, 'E1M1')
 
 renderer = Doom::Render::SteppingRenderer.new(wad, map, textures, palette, colormap, flats, sprites)
+renderer.skip_background_fill = true
 
 player_start = map.player_start
 renderer.set_player(player_start.x, player_start.y, 41, player_start.angle)
