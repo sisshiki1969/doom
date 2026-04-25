@@ -503,6 +503,21 @@ module Doom
         end
       end
 
+      # Lazily computed and cached on first access; cleared by load_next_map.
+      def map_bounds
+        return @map_bounds if defined?(@map_bounds) && @map_bounds
+        min_x = min_y = Float::INFINITY
+        max_x = max_y = -Float::INFINITY
+        @map.vertices.each do |v|
+          min_x = v.x if v.x < min_x
+          max_x = v.x if v.x > max_x
+          min_y = v.y if v.y < min_y
+          max_y = v.y if v.y > max_y
+        end
+        return nil if max_x == min_x || max_y == min_y
+        @map_bounds = { min_x: min_x, max_x: max_x, min_y: min_y, max_y: max_y }
+      end
+
       def settle_player_height(x, y)
         @physics.settle_at(x, y)
         z = @physics.eye_z
@@ -906,6 +921,7 @@ module Doom
         # Load new map data
         map = Map::MapData.load(wad, map_name)
         @map = map
+        @map_bounds = nil  # Recompute on next automap draw
 
         # Rebuild all systems for new map
         @renderer = Render::Renderer.new(
@@ -1100,20 +1116,13 @@ module Doom
         # Black background
         Gosu.draw_rect(0, 0, width, height, Gosu::Color::BLACK, 0)
 
-        # Compute map bounds
-        verts = @map.vertices
-        min_x = min_y = Float::INFINITY
-        max_x = max_y = -Float::INFINITY
-        verts.each do |v|
-          min_x = v.x if v.x < min_x
-          max_x = v.x if v.x > max_x
-          min_y = v.y if v.y < min_y
-          max_y = v.y if v.y > max_y
-        end
+        bounds = map_bounds
+        return unless bounds
 
+        verts = @map.vertices
+        min_x, max_x, min_y, max_y = bounds[:min_x], bounds[:max_x], bounds[:min_y], bounds[:max_y]
         map_w = max_x - min_x
         map_h = max_y - min_y
-        return if map_w == 0 || map_h == 0
 
         # Scale to fit screen with margin
         draw_w = width - MAP_MARGIN * 2
