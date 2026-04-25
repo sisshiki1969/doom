@@ -246,6 +246,13 @@ module Doom
         @deltaviewheight = (VIEWHEIGHT - @viewheight) / 8.0
       end
 
+      # Called on landing after a fall. Matches Chocolate Doom P_ZMovement:
+      # deltaviewheight = momz >> 3, producing a squat that update_viewheight
+      # then recovers via DELTA_ACCEL.
+      def apply_fall_impact(momz)
+        @deltaviewheight = momz / 8.0
+      end
+
       # Gradually restore viewheight to VIEWHEIGHT (called each tic).
       # Matches Chocolate Doom P_CalcHeight viewheight recovery loop.
       # For step-up: viewheight < 41, delta > 0, accelerates upward.

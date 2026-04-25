@@ -105,6 +105,7 @@ module Doom
         @skill = Game::Menu::SKILL_MEDIUM
         @skill_hidden = {}  # Thing indices hidden by difficulty
         @last_floor_height = nil
+        @player_momz = 0.0
         @move_momx = 0.0
         @move_momy = 0.0
         @leveltime = 0
@@ -170,6 +171,7 @@ module Doom
           @tic_accumulator -= 1.0
           @sector_effects&.update
           @player_state&.update_viewheight
+          apply_gravity
           @player_state&.update_attack  # Attack timing at 35fps like DOOM
           health_before = @player_state&.health || 100
 
@@ -569,6 +571,11 @@ module Doom
         [dot * wall_dx, dot * wall_dy]
       end
 
+      # Per-tic gravity: matches Chocolate Doom's P_ZMovement, GRAVITY=1 unit/tic^2.
+      GRAVITY = 1.0
+      INITIAL_FALL_MOMZ = -2.0  # First-tic kick when momz==0 (DOOM uses -GRAVITY*2)
+      FALL_IMPACT_THRESHOLD = -8.0  # momz < -GRAVITY*8 triggers viewheight squat
+
       def update_player_height(x, y)
         sector = @map.sector_at(x, y)
         return unless sector
@@ -576,17 +583,61 @@ module Doom
         new_floor = sector.floor_height
 
         if @player_state
-          # Detect step: floor height changed since last move
-          if @last_floor_height && @last_floor_height != new_floor
+          @last_floor_height ||= new_floor
+
+          if new_floor > @last_floor_height
+            # Step up: snap immediately (gated to <=24 by valid_move?)
             step = new_floor - @last_floor_height
             @player_state.notify_step(step) if step.abs <= 24
+            @last_floor_height = new_floor
+            @player_momz = 0.0
           end
-          @last_floor_height = new_floor
+          # Stepping onto a lower floor leaves @last_floor_height alone;
+          # apply_gravity will lower the player gradually each tic.
 
-          view_bob = @player_state.view_bob_offset
-          @renderer.set_z(new_floor + @player_state.viewheight + view_bob)
+          refresh_player_z
         else
+          @last_floor_height = new_floor
           @renderer.set_z(new_floor + 41)
+        end
+      end
+
+      def refresh_player_z
+        return unless @last_floor_height
+        if @player_state
+          view_bob = @player_state.view_bob_offset
+          @renderer.set_z(@last_floor_height + @player_state.viewheight + view_bob)
+        else
+          @renderer.set_z(@last_floor_height + 41)
+        end
+      end
+
+      # Per-tic vertical movement: applies gravity when feet are above the
+      # current sector floor, snaps up when a lift rises beneath the player.
+      def apply_gravity
+        return unless @player_state && @last_floor_height
+
+        sector = @map.sector_at(@renderer.player_x, @renderer.player_y)
+        return unless sector
+        ground = sector.floor_height
+
+        if @last_floor_height > ground
+          @player_momz = (@player_momz == 0.0 ? INITIAL_FALL_MOMZ : @player_momz - GRAVITY)
+          @last_floor_height += @player_momz
+          if @last_floor_height <= ground
+            impact_momz = @player_momz
+            @last_floor_height = ground
+            @player_momz = 0.0
+            @player_state.apply_fall_impact(impact_momz) if impact_momz < FALL_IMPACT_THRESHOLD
+          end
+          refresh_player_z
+        elsif @last_floor_height < ground
+          # Floor rose under player (lift, raising sector)
+          step = ground - @last_floor_height
+          @player_state.notify_step(step) if step.abs <= 24
+          @last_floor_height = ground
+          @player_momz = 0.0
+          refresh_player_z
         end
       end
 
@@ -595,9 +646,10 @@ module Doom
         sector = @map.sector_at(new_x, new_y)
         return false unless sector
 
-        # Check floor height - can't step up too high
+        # Check floor height - can't step up too high (step-down is unlimited)
         floor_height = sector.floor_height
-        return false if floor_height > @renderer.player_z + 24  # Max step height
+        current_floor = @last_floor_height || (@renderer.player_z - Game::PlayerState::VIEWHEIGHT)
+        return false if floor_height - current_floor > 24  # Max step-up height
 
         # Check against blocking linedefs: both circle intersection and path crossing
         @map.linedefs.each do |linedef|
@@ -645,18 +697,22 @@ module Doom
           return segments_intersect?(x1, y1, x2, y2, v1.x, v1.y, v2.x, v2.y)
         end
 
-        # Two-sided: check if impassable (high step OR low ceiling)
+        # Two-sided: check if impassable (high step-up OR low ceiling)
         front_side = @map.sidedefs[linedef.sidedef_right]
         back_side = @map.sidedefs[linedef.sidedef_left]
         front_sector = @map.sectors[front_side.sector]
         back_sector = @map.sectors[back_side.sector]
 
-        step = (back_sector.floor_height - front_sector.floor_height).abs
         min_ceiling = [front_sector.ceiling_height, back_sector.ceiling_height].min
         max_floor = [front_sector.floor_height, back_sector.floor_height].max
 
-        # Passable if step is small AND enough headroom
-        return false if step <= 24 && (min_ceiling - max_floor) >= 56
+        # Step-up is from player's current floor to the higher of the two adjoining floors.
+        # Step-down (falling off a ledge) is unlimited.
+        current_floor = @last_floor_height || front_sector.floor_height
+        step_up = max_floor - current_floor
+
+        # Passable if step-up is small AND enough headroom
+        return false if step_up <= 24 && (min_ceiling - max_floor) >= 56
 
         segments_intersect?(x1, y1, x2, y2, v1.x, v1.y, v2.x, v2.y)
       end
@@ -694,19 +750,23 @@ module Doom
         # Don't check here -- linedef_blocks? is a proximity check and would
         # block the player when standing near the line, not just crossing it
 
-        # Two-sided: check if impassable (high step OR low ceiling)
+        # Two-sided: check if impassable (high step-up OR low ceiling)
         front_side = @map.sidedefs[linedef.sidedef_right]
         back_side = @map.sidedefs[linedef.sidedef_left]
 
         front_sector = @map.sectors[front_side.sector]
         back_sector = @map.sectors[back_side.sector]
 
-        step = (back_sector.floor_height - front_sector.floor_height).abs
         min_ceiling = [front_sector.ceiling_height, back_sector.ceiling_height].min
         max_floor = [front_sector.floor_height, back_sector.floor_height].max
 
-        # Block if step too high OR not enough headroom
-        step > 24 || (min_ceiling - max_floor) < 56
+        # Step-up uses the higher floor relative to the player's current floor.
+        # Step-down (dropping off a ledge) is unlimited.
+        current_floor = @last_floor_height || front_sector.floor_height
+        step_up = max_floor - current_floor
+
+        # Block if step-up too high OR not enough headroom
+        step_up > 24 || (min_ceiling - max_floor) < 56
       end
 
       def line_circle_intersect?(x1, y1, x2, y2, cx, cy, radius)
@@ -1001,6 +1061,7 @@ module Doom
       def respawn_player
         @player_state.reset
         @last_floor_height = nil
+        @player_momz = 0.0
         @move_momx = 0.0
         @move_momy = 0.0
 
@@ -1156,6 +1217,7 @@ module Doom
         @monster_ai.damage_multiplier = @damage_multiplier
 
         @last_floor_height = nil
+        @player_momz = 0.0
         @move_momx = 0.0
         @move_momy = 0.0
         @leveltime = 0
