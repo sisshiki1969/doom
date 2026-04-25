@@ -271,4 +271,32 @@ RSpec.describe Doom::Map::MapData do
       expect(map.subsector_at(-1_000_000, -1_000_000)).to eq(map.subsectors[1])
     end
   end
+
+  describe '#each_linedef_near (blockmap)' do
+    it 'falls back to scanning all linedefs when no blockmap is loaded' do
+      m = Doom::Map::MapData.new('TEST')
+      m.linedefs << Doom::Map::Linedef.new(0, 0, 0, 0, 0, 0, 0xFFFF)
+      m.linedefs << Doom::Map::Linedef.new(0, 0, 0, 0, 0, 0, 0xFFFF)
+      yielded = []
+      m.each_linedef_near(0, 0, 100, 100) { |ld| yielded << ld }
+      expect(yielded.size).to eq(2)
+      expect(m.blockmap_loaded?).to be false
+    end
+
+    it 'parses a blockmap header and reports loaded' do
+      # Header: origin (-100, -100), 2 cols, 2 rows. 4 block offsets, all
+      # pointing to a single sentinel-then-terminator block.
+      data = [
+        -100, -100, 2, 2,                  # header
+        12, 12, 12, 12,                    # 4 block offsets (in words)
+        0, -1                              # block: 0x0000 prefix, 0xFFFF terminator
+      ].pack('s<*')
+      m = Doom::Map::MapData.new('TEST')
+      m.load_blockmap(data)
+      expect(m.blockmap_loaded?).to be true
+      yielded = []
+      m.each_linedef_near(0, 0, 0, 0) { |ld| yielded << ld }
+      expect(yielded).to be_empty  # block is empty
+    end
+  end
 end

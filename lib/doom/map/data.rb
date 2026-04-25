@@ -105,6 +105,12 @@ module Doom
         map.load_nodes(wad.read_lump_at(wad.directory[lump_idx + 7]))
         map.load_sectors(wad.read_lump_at(wad.directory[lump_idx + 8]))
 
+        # BLOCKMAP is at lump +10 (REJECT is +9). Optional -- parse defensively.
+        blockmap_entry = wad.directory[lump_idx + 10]
+        if blockmap_entry && blockmap_entry.name == 'BLOCKMAP'
+          map.load_blockmap(wad.read_lump_at(blockmap_entry))
+        end
+
         map
       end
 
@@ -237,6 +243,72 @@ module Doom
 
       def player_start
         @things.find { |t| t.type == 1 }
+      end
+
+      # BLOCKMAP: 128-unit grid index into linedefs. Each block lists the
+      # linedefs that touch it. Used for fast collision lookup.
+      BLOCKMAP_BLOCK_SIZE = 128
+
+      def load_blockmap(data)
+        return if data.nil? || data.size < 8
+
+        @blockmap_origin_x = data[0, 2].unpack1('s<')
+        @blockmap_origin_y = data[2, 2].unpack1('s<')
+        @blockmap_cols = data[4, 2].unpack1('s<')
+        @blockmap_rows = data[6, 2].unpack1('s<')
+        return if @blockmap_cols <= 0 || @blockmap_rows <= 0
+
+        block_count = @blockmap_cols * @blockmap_rows
+        @blockmap_blocks = Array.new(block_count)
+
+        block_count.times do |i|
+          offset_words = data[8 + i * 2, 2].unpack1('v')
+          byte_offset = offset_words * 2
+          linedefs_in_block = []
+          ptr = byte_offset
+          # Skip the leading 0x0000 sentinel that some blockmaps include.
+          ptr += 2 if ptr + 2 <= data.size && data[ptr, 2].unpack1('s<') == 0
+          while ptr + 2 <= data.size
+            idx = data[ptr, 2].unpack1('s<')
+            break if idx == -1  # 0xFFFF terminator
+            linedefs_in_block << idx
+            ptr += 2
+          end
+          @blockmap_blocks[i] = linedefs_in_block
+        end
+      end
+
+      # Yield each linedef whose block overlaps the bounding box (min_x, min_y,
+      # max_x, max_y). Yields each linedef at most once per call. Falls back
+      # to iterating all linedefs if no blockmap is loaded.
+      def each_linedef_near(min_x, min_y, max_x, max_y)
+        unless @blockmap_blocks
+          @linedefs.each { |ld| yield ld }
+          return
+        end
+
+        bx0 = ((min_x - @blockmap_origin_x) / BLOCKMAP_BLOCK_SIZE).floor.clamp(0, @blockmap_cols - 1)
+        bx1 = ((max_x - @blockmap_origin_x) / BLOCKMAP_BLOCK_SIZE).floor.clamp(0, @blockmap_cols - 1)
+        by0 = ((min_y - @blockmap_origin_y) / BLOCKMAP_BLOCK_SIZE).floor.clamp(0, @blockmap_rows - 1)
+        by1 = ((max_y - @blockmap_origin_y) / BLOCKMAP_BLOCK_SIZE).floor.clamp(0, @blockmap_rows - 1)
+
+        seen = {}
+        by0.upto(by1) do |by|
+          row_base = by * @blockmap_cols
+          bx0.upto(bx1) do |bx|
+            indices = @blockmap_blocks[row_base + bx]
+            next unless indices
+            indices.each do |idx|
+              next if seen[idx]
+              seen[idx] = true
+              yield @linedefs[idx]
+            end
+          end
+        end
+      end
+
+      def blockmap_loaded?
+        !@blockmap_blocks.nil?
       end
 
       # Find the sector at a given position by traversing the BSP tree

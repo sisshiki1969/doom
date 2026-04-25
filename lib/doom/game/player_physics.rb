@@ -128,7 +128,7 @@ module Doom
         best_wall = nil
         best_dist = Float::INFINITY
 
-        @map.linedefs.each do |linedef|
+        each_nearby_linedef(px, py, px + dx, py + dy) do |linedef|
           v1 = @map.vertices[linedef.v1]
           v2 = @map.vertices[linedef.v2]
 
@@ -167,7 +167,7 @@ module Doom
         current_floor = @floor_z || sector.floor_height
         return false if sector.floor_height - current_floor > MAX_STEP_UP
 
-        @map.linedefs.each do |linedef|
+        each_nearby_linedef(old_x, old_y, new_x, new_y) do |linedef|
           return false if linedef_blocks?(linedef, new_x, new_y)
           return false if crosses_blocking_linedef?(old_x, old_y, new_x, new_y, linedef)
         end
@@ -178,6 +178,23 @@ module Doom
       end
 
       private
+
+      # Iterate linedefs that may interact with the player moving from
+      # (x1, y1) to (x2, y2). Uses BLOCKMAP when available; otherwise falls
+      # back to scanning all linedefs.
+      def each_nearby_linedef(x1, y1, x2, y2)
+        unless @map.respond_to?(:blockmap_loaded?) && @map.blockmap_loaded?
+          @map.linedefs.each { |ld| yield ld }
+          return
+        end
+
+        # Pad the bbox by player radius so walls just outside still register.
+        min_x = [x1, x2].min - PLAYER_RADIUS
+        max_x = [x1, x2].max + PLAYER_RADIUS
+        min_y = [y1, y2].min - PLAYER_RADIUS
+        max_y = [y1, y2].max + PLAYER_RADIUS
+        @map.each_linedef_near(min_x, min_y, max_x, max_y) { |ld| yield ld }
+      end
 
       def crosses_blocking_linedef?(x1, y1, x2, y2, linedef)
         v1 = @map.vertices[linedef.v1]
