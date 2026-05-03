@@ -212,6 +212,8 @@ module Doom
         @player_y = y.to_f
         @player_z = z.to_f
         @player_angle = angle * Math::PI / 180.0
+        @sin_angle = Math.sin(@player_angle)
+        @cos_angle = Math.cos(@player_angle)
       end
 
       def move_to(x, y)
@@ -225,6 +227,8 @@ module Doom
 
       def turn(degrees)
         @player_angle += degrees * Math::PI / 180.0
+        @sin_angle = Math.sin(@player_angle)
+        @cos_angle = Math.cos(@player_angle)
       end
 
       def render_frame
