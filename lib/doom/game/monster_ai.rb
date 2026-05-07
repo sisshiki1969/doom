@@ -286,6 +286,13 @@ module Doom
         dy = player_y - mon.y
         dist = Math.sqrt(dx * dx + dy * dy)
 
+        # Re-check line of sight at fire time. The player may have moved
+        # behind cover or a door may have closed during the attack animation
+        # (which spans several tics between try_attack and the fire frame).
+        # Melee always lands on contact; ranged skips silently if LOS broke.
+        ranged = atk[:type] == :hitscan || atk[:type] == :projectile
+        return if ranged && !has_line_of_sight?(mon.x, mon.y, player_x, player_y)
+
         case atk[:type]
         when :melee
           min_dmg, max_dmg = atk[:damage]
