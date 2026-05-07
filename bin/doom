@@ -8,6 +8,14 @@ unless ARGV.delete('--no-yjit')
   end
 end
 
+# Headless benchmark mode. Skips loading the full game stack (Gosu, sound,
+# menus, etc.) and runs the renderer in a tight loop. Self-contained: see
+# lib/doom/benchmark.rb.
+if ARGV.delete('--bench')
+  require_relative '../lib/doom/benchmark'
+  exit Doom::Benchmark.run(ARGV)
+end
+
 # Parse flags
 rubykaigi_mode = ARGV.delete('--rubykaigi') || ARGV.delete('--kaigi')
 
@@ -23,6 +31,8 @@ if wad_path == '-h' || wad_path == '--help'
   puts "Options:"
   puts "  -h, --help     Show this help message"
   puts "  -v, --version  Show version"
+  puts "  --bench        Run headless renderer benchmark (auto-downloads Freedoom)"
+  puts "                 Subflags: --json --frames=N --warmup=N --map=E1M1 --wad=PATH"
   puts
   puts "If no WAD file is specified, doom will look for doom1.wad in:"
   puts "  1. Current directory"
