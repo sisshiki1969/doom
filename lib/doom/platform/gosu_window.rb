@@ -940,7 +940,7 @@ module Doom
         @item_pickup = Game::ItemPickup.new(map, @player_state, @skill_hidden)
         @item_pickup.ammo_multiplier = (@skill == Game::Menu::SKILL_BABY) ? 2 : 1
 
-        combat_sprites = sprites
+        combat_sprites = @renderer.sprites
         @combat = Game::Combat.new(map, @player_state, combat_sprites, @skill_hidden, @sound)
         @monster_ai = Game::MonsterAI.new(map, @combat, @player_state, combat_sprites, @skill_hidden, @sound)
         @monster_ai.aggression = true
