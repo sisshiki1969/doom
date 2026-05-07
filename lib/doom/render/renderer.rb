@@ -78,6 +78,8 @@ module Doom
         @player_y = 0.0
         @player_z = 41.0
         @player_angle = 0.0
+        @sin_angle = 0.0
+        @cos_angle = 1.0
 
         # Projection constant - distance to projection plane
         @projection = HALF_WIDTH / Math.tan(FOV * Math::PI / 360.0)
